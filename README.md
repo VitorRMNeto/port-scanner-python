@@ -5,14 +5,20 @@
 ```bash
 git clone https://github.com/VitorRMNeto/port-scanner-python.git
 cd port-scanner-python
+```
 
-### 1. Clonar o repositório
+### 2. Executar o script
 
+```bash
 py scanner.py
+```
 
 ### 3. Informar o alvo
 
-Digite o IP ou domínio: (scanme.nmap.org)
+Digite o IP ou domínio: 
+```bash
+scanme.nmap.org
+```
 
 📊 Saída esperada
 

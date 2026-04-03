@@ -6,11 +6,11 @@
 git clone https://github.com/VitorRMNeto/port-scanner-python.git
 cd port-scanner-python
 
-###2. Executar o script
+### 2. Executar o script
 
 py scanner.py
 
-###3. Informar o alvo
+### 3. Informar o alvo
 
 Digite o IP ou domínio: (scanme.nmap.org)
 

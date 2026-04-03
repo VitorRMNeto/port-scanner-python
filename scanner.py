@@ -2,6 +2,7 @@ import socket
 import threading
 import json
 import datetime
+import re
 
 open_ports = []
 lock = threading.Lock()
@@ -42,6 +43,24 @@ def scan_port(target, port):
         if s:
             s.close()
 
+import re
+
+def extract_version(banner):
+    patterns = [
+        r"OpenSSH[_\s]?([\d\.]+)",
+        r"Apache/([\d\.]+)",
+        r"Python/([\d\.]+)",
+        r"SimpleHTTP/([\d\.]+)",
+        r"VMware.*?([\d\.]+)"
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, banner, re.IGNORECASE)
+        if match:
+            return match.group(0).strip().title()  
+
+    return None
+
 def generate_report(open_ports):
     print("\n--- Relatório de Segurança ---\n")
 
@@ -49,17 +68,39 @@ def generate_report(open_ports):
         port = item["port"]
         banner = item["banner"].lower()
 
-        if port == 22:
-            print(f"[PORTA {port}] SSH detectado")
-            print("Risco: Possível ataque de força bruta (brute force)\n")
+        version_info = extract_version(banner)
 
-        elif port == 80:
-            print(f"[PORTA {port}] HTTP detectado")
-            print("Risco: Possíveis vulnerabilidades web (XSS, SQL Injection)\n")
+        if "ssh" in banner:
+            print(f"[PORTA {port}] SSH detectado via banner")
 
-        elif port == 443:
-            print(f"[PORTA {port}] HTTPS detectado")
-            print("Risco: Verificar certificados e configuração SSL/TLS\n")
+            if version_info:
+                print(f"Versão detectada: {version_info}")
+
+            print("Risco: Possível ataque de força bruta\n")
+
+        elif "apache" in banner or "http" in banner:
+            print(f"[PORTA {port}] HTTP detectado via banner")
+
+            if version_info:
+                print(f"Versão detectada: {version_info}")
+
+            print("Risco: Possíveis vulnerabilidades web\n")
+
+        elif "vmware" in banner:
+            print(f"[PORTA {port}] VMware Service detectado")
+
+            if version_info:
+                print(f"Versão detectada: {version_info}")
+
+            print("Risco: Possível serviço de virtualização exposto\n")
+
+        elif port == 445:
+            print(f"[PORTA {port}] SMB detectado")
+            print("Risco: Possível exploração SMB\n")
+
+        elif port == 135:
+            print(f"[PORTA {port}] RPC detectado")
+            print("Risco: Comunicação interna do Windows\n")
 
         else:
             print(f"[PORTA {port}] Serviço desconhecido")

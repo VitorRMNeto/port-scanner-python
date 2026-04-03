@@ -15,7 +15,7 @@ py scanner.py
 
 ### 3. Informar o alvo
 
-Digite o IP ou domínio: 
+Digite o IP ou domínio (exemplo):
 ```bash
 scanme.nmap.org
 ```
@@ -24,8 +24,7 @@ scanme.nmap.org
 
 O programa irá:
 
-Exibir portas abertas
-Mostrar banners dos serviços
-Gerar um relatório de segurança no terminal
-Salvar os resultados em:
-results/scan.json
+- Exibir portas abertas  
+- Mostrar banners dos serviços  
+- Gerar um relatório de segurança no terminal  
+- Salvar os resultados em: `results/scan.json`

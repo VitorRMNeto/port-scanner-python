@@ -6,7 +6,7 @@
 git clone https://github.com/VitorRMNeto/port-scanner-python.git
 cd port-scanner-python
 
-### 2. Executar o script
+### 1. Clonar o repositório
 
 py scanner.py
 

@@ -87,14 +87,12 @@ results/scan.json
 ## ⚠️ Observações importantes
 
 A identificação de serviços é baseada em:
-análise de banner
-fallback por porta
-Nem todos os serviços expõem versão
-A ausência de CVEs não significa que o serviço é seguro
-A busca por vulnerabilidades é uma correlação básica, não substitui ferramentas como scanners profissionais
-
-## ⚠️ Limitações
-
+- análise de banner
+- Fallback por porta
+- Nem todos os serviços expõem versão
+- A ausência de CVEs não significa que o serviço é seguro
+- A busca por vulnerabilidades é uma correlação básica, não substitui ferramentas como scanners profissionais
+### Limitações:
 - Dependência de banners (nem todos os serviços expõem versão)
 - Correlação básica de CVE (não substitui scanners profissionais)
 - Não realiza exploração, apenas identificação

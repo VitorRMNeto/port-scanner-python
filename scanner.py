@@ -9,66 +9,97 @@ import time
 open_ports = []
 lock = threading.Lock()
 
+def normalize_service(service):
+    mapping = {
+        "apache": "apache http server",
+        "http": "apache http server",
+        "nginx": "nginx",
+        "ssh": "openssh",
+        "ftp": "pure-ftpd",
+        "smtp": "exim",
+        "pop3": "dovecot",
+        "imap": "dovecot",
+        "imaps": "dovecot",
+        "pop3s": "dovecot",
+        "https": "apache http server"
+    }
+
+    return mapping.get(service.lower(), service.lower())
+
 def search_cves(service, version):
     try:
-        query = f"{service} {version}"
-        url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+        base_url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
-        params = {
-            "keywordSearch": query,
-            "resultsPerPage": 10
-        }
+        service = normalize_service(service)
 
-        response = requests.get(url, params=params, timeout=5)
-        data = response.json()
+        queries = [
+            f"{service} {version}",
+            service  # fallback sem versão
+        ]
 
-        cves = []
+        all_cves = []
 
-        for item in data.get("vulnerabilities", []):
-            cve_data = item["cve"]
-            cve_id = cve_data["id"]
+        for query in queries:
+            params = {
+                "keywordSearch": query,
+                "resultsPerPage": 10
+            }
 
-            score = 0
-            severity = "UNKNOWN"
+            response = requests.get(base_url, params=params, timeout=5)
 
-            metrics = cve_data.get("metrics", {})
+            if response.status_code != 200:
+                continue
 
-            if "cvssMetricV31" in metrics:
-                cvss = metrics["cvssMetricV31"][0]["cvssData"]
-                score = cvss.get("baseScore", 0)
-                severity = cvss.get("baseSeverity", "UNKNOWN")
+            data = response.json()
 
-            elif "cvssMetricV30" in metrics:
-                cvss = metrics["cvssMetricV30"][0]["cvssData"]
-                score = cvss.get("baseScore", 0)
-                severity = cvss.get("baseSeverity", "UNKNOWN")
+            for item in data.get("vulnerabilities", []):
+                cve_data = item["cve"]
+                cve_id = cve_data["id"]
 
-            elif "cvssMetricV2" in metrics:
-                cvss = metrics["cvssMetricV2"][0]["cvssData"]
-                score = cvss.get("baseScore", 0)
-                severity = "LEGACY"
+                score = 0
+                severity = "UNKNOWN"
 
-            if score >=9:
-                severity = "CRITICAL"
+                metrics = cve_data.get("metrics", {})
 
-            elif score >=7:
-                severity = "HIGH"
+                if "cvssMetricV31" in metrics:
+                    cvss = metrics["cvssMetricV31"][0]["cvssData"]
+                    score = cvss.get("baseScore", 0)
 
-            elif score >=4:
-                severity = "MEDIUM"
+                elif "cvssMetricV30" in metrics:
+                    cvss = metrics["cvssMetricV30"][0]["cvssData"]
+                    score = cvss.get("baseScore", 0)
 
-            else:
-                severity = "LOW"
+                elif "cvssMetricV2" in metrics:
+                    cvss = metrics["cvssMetricV2"][0]["cvssData"]
+                    score = cvss.get("baseScore", 0)
 
-            cves.append({
-                "id": cve_id,
-                "score": score,
-                "severity": severity
-            })
+                # Classificação manual (melhor controle)
+                if score >= 9:
+                    severity = "CRITICAL"
+                elif score >= 7:
+                    severity = "HIGH"
+                elif score >= 4:
+                    severity = "MEDIUM"
+                else:
+                    severity = "LOW"
 
-        cves = sorted(cves, key=lambda x: x["score"], reverse=True)
+                # Evita duplicados
+                if not any(c["id"] == cve_id for c in all_cves):
+                    all_cves.append({
+                        "id": cve_id,
+                        "score": score,
+                        "severity": severity
+                    })
 
-        return cves[:3]  # top 3
+        # Ordena por score
+        all_cves = sorted(all_cves, key=lambda x: x["score"], reverse=True)
+
+        filtered = [c for c in all_cves if c["score"] >= 4]
+
+        return filtered[:3] if filtered else all_cves[:3]
+
+    except Exception as e:
+        return []
 
     except:
         return []
@@ -108,19 +139,29 @@ def scan_port(target, port):
         if s:
             s.close()
 
+
 def extract_version(banner):
     patterns = [
-        r"OpenSSH[_\s]?([\d\.p]+)",
-        r"Apache/([\d\.]+)",
-        r"Python/([\d\.]+)",
-        r"SimpleHTTP/([\d\.]+)",
-        r"VMware.*?([\d\.]+)"
+        r"(openssh)[-_ ]([\d\.p]+)",
+        r"(apache)[/ ]([\d\.]+)",
+        r"(nginx)[/ ]?([\d\.]+)?",
+        r"(exim)[ ]([\d\.]+)",
+        r"(dovecot)[ ]([\d\.]+)?",
+        r"(pure-ftpd)",
     ]
 
+    banner = banner.lower()
+
     for pattern in patterns:
-        match = re.search(pattern, banner, re.IGNORECASE)
+        match = re.search(pattern, banner)
         if match:
-            return match.group(0)  
+            if len(match.groups()) == 2:
+                service, version = match.groups()
+                version = version if version else "unknown"
+                return f"{service}/{version}"
+            else:
+                service = match.group(1)
+                return f"{service}/unknown"
 
     return None
 
@@ -169,6 +210,10 @@ def identify_service(port, banner):
 
     return "unknown"
 
+def process_cves(service_name, version):
+    version_short = ".".join(version.split(".")[:2])
+    return search_cves(service_name, version_short)
+
 def generate_report(open_ports):
     print("\n--- Relatório de Segurança ---\n")
 
@@ -178,132 +223,141 @@ def generate_report(open_ports):
         port = item["port"]
         banner = item["banner"].lower()
         version_info = extract_version(banner)
-        service = "unknown"
-        version= version_info if version_info else "unknown"
-        cves = []
         service = identify_service(port, banner)
+
+        service_name = "unknown"
+        version = "unknown"
+        cves = []
+
+        # EXTRAÇÃO INTELIGENTE
+        if version_info and "/" in version_info:
+            parts = version_info.split("/")
+            if len(parts) == 2:
+                service_name = parts[0].replace("_", " ").lower()
+                version = parts[1].lower()
+
+        # 🔥 FALLBACK PARA HTTP (importante)
+        if service == "http" and service_name == "unknown":
+            if "apache" in banner:
+                service_name = "apache"
+            elif "nginx" in banner:
+                service_name = "nginx"
+
+        # =========================
+        # 🔍 DETECÇÃO DE SERVIÇO
+        # =========================
 
         if service == "ssh":
             print(f"[PORTA {port}] SSH detectado via banner")
 
-            if version_info:
-                print(f"Versão detectada: {version_info}")
-
-                parts = version_info.split("/")
-                if len(parts) == 2:
-                    service_name = parts[0].replace("_", " ").lower()
-                    version = parts[1].lower()
-                    version_short = ".".join(version.split(".")[:2])
-
-                    cves = search_cves(service, version_short)
-
-                    print("Possíveis CVEs:")
-
-                    if cves:
-                        for cve in cves:
-                            print(f" - {cve['id']} ({cve['severity']} - {cve['score']})")
-                    else:
-                        print(" - Nenhuma CVE encontrada")
-
-            print("Risco: Possível ataque de força bruta\n")
-
         elif service == "http":
             print(f"[PORTA {port}] HTTP detectado via banner")
 
-            version_info = "http"
-
-            if version_info:
-                print(f"Versão detectada: {version_info}")
-
-                parts = version_info.split("/")
-                if len(parts) == 2:
-                    service_name = parts[0].replace("_", " ").lower()
-                    version = parts[1]
-                    version_short = ".".join(version.split(".")[:2])
-
-                    cves = search_cves(service, version_short)
-
-                    print("Possíveis CVEs:")
-
-                    if cves:
-                        for cve in cves:
-                            print(f" - {cve['id']} ({cve['severity']} - {cve['score']})")
-                    else:
-                        print(" - Nenhuma CVE encontrada")
-
-            print("Risco: Possíveis vulnerabilidades web\n")
-
         elif service == "ftp":
             print(f"[PORTA {port}] FTP detectado")
-            print("Risco: Credenciais podem trafegar em texto plano\n")
 
         elif service == "smtp":
             print(f"[PORTA {port}] SMTP detectado")
-            print("Risco: Possível uso para spam ou relay\n")
 
         elif service == "pop3":
             print(f"[PORTA {port}] POP3 detectado")
-            print("Risco: Credenciais podem trafegar em texto plano\n")
 
         elif service == "imap":
             print(f"[PORTA {port}] IMAP detectado")
-            print("Risco: Serviço de email exposto\n")
 
         elif service == "dns":
             print(f"[PORTA {port}] DNS detectado")
-            print("Risco: Possível exposição de infraestrutura\n")
 
         elif service == "rpc":
             print(f"[PORTA {port}] RPC detectado")
-            print("Risco: Comunicação interna exposta\n")
 
         elif service == "https":
             print(f"[PORTA {port}] HTTPS detectado")
-            print("Risco: Verificar certificados e configurações TLS\n")
 
         elif service == "vmware":
             print(f"[PORTA {port}] VMware Service detectado")
 
-            if version_info:
-                print(f"Versão detectada: {version_info}")
-
-                parts = version_info.split("/")
-                if len(parts) == 2:
-                    service_name = parts[0].replace("_", " ").lower()
-                    version = parts[1]
-                    version_short = ".".join(version.split(".")[:2])
-
-                    cves = search_cves(service_name, version_short)
-
-                    print("Possíveis CVEs:")
-
-                    if cves:
-                        for cve in cves:
-                            print(f" - {cve['id']} ({cve['severity']} - {cve['score']})")
-                    else:
-                        print(" - Nenhuma CVE encontrada")
-
-            print("Risco: Possível serviço de virtualização exposto\n")
-
         elif port == 445:
             print(f"[PORTA {port}] SMB detectado")
-            print("Risco: Possível exploração SMB\n")
 
         elif port == 135:
             print(f"[PORTA {port}] RPC detectado")
-            print("Risco: Comunicação interna do Windows\n")
 
         else:
             print(f"[PORTA {port}] Serviço desconhecido")
+
+        # =========================
+        # 🔎 VERSÃO + CVE
+        # =========================
+
+        if service_name != "unknown":
+            print(f"Versão detectada: {service_name}/{version}")
+
+            cves = search_cves(service_name, version)
+
+            print("Possíveis CVEs:")
+
+            if cves:
+                for cve in cves:
+                    print(f" - {cve['id']} ({cve['severity']} - {cve['score']})")
+            else:
+                print(" - Nenhuma CVE encontrada")
+
+        # =========================
+        # ⚠️ RISCO
+        # =========================
+
+        if service == "ssh":
+            print("Risco: Possível ataque de força bruta\n")
+
+        elif service == "http":
+            print("Risco: Possíveis vulnerabilidades web\n")
+
+        elif service == "ftp":
+            print("Risco: Credenciais podem trafegar em texto plano\n")
+
+        elif service == "smtp":
+            print("Risco: Possível uso para spam ou relay\n")
+
+        elif service == "pop3":
+            print("Risco: Credenciais podem trafegar em texto plano\n")
+
+        elif service == "imap":
+            print("Risco: Serviço de email exposto\n")
+
+        elif service == "dns":
+            print("Risco: Possível exposição de infraestrutura\n")
+
+        elif service == "rpc":
+            print("Risco: Comunicação interna exposta\n")
+
+        elif service == "https":
+            print("Risco: Verificar certificados e configurações TLS\n")
+
+        elif service == "vmware":
+            print("Risco: Possível serviço de virtualização exposto\n")
+
+        elif port == 445:
+            print("Risco: Possível exploração SMB\n")
+
+        elif port == 135:
+            print("Risco: Comunicação interna do Windows\n")
+
+        else:
             print("Risco: Necessário investigar manualmente\n")
 
+        # =========================
+        # 💾 JSON
+        # =========================
+
         scan_results.append({
-                    "port": port,
-                    "service": service,
-                    "version": version,
-                    "cves": cves
-                })
-    
+            "port": port,
+            "service": service,
+            "product": service_name,
+            "version": version,
+            "cves": cves
+        })
+
     return scan_results
 
 def main():
